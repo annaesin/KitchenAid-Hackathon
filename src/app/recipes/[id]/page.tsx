@@ -6,7 +6,6 @@ import {
   Check,
   ChefHat,
   Clock3,
-  Heart,
   Play,
   Star,
   UsersRound,
@@ -14,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { SaveRecipeButton } from "@/components/recipes/save-recipe-button";
 import { mockRecipes } from "@/data/recipes";
 
 type RecipePageProps = {
@@ -52,13 +52,7 @@ export default async function RecipePage({ params }: RecipePageProps) {
               className="object-cover"
             />
 
-            <button
-              type="button"
-              aria-label={`Save ${recipe.title}`}
-              className="absolute right-4 top-4 flex size-11 items-center justify-center rounded-full bg-white/90 text-gray-700 shadow-sm backdrop-blur transition hover:text-red-500"
-            >
-              <Heart className="size-5" />
-            </button>
+            <SaveRecipeButton recipe={recipe} />
           </div>
 
           <div className="mt-7">
