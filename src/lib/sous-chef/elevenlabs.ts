@@ -47,13 +47,25 @@ export async function textToSpeech(
   });
 }
 
-/** Transcribe user mic audio with ElevenLabs Scribe. Returns plain text. */
+/**
+ * Transcribe user mic audio with ElevenLabs Scribe. Returns plain text.
+ *
+ * The language is pinned (default English). Leaving Scribe to auto-detect makes
+ * it guess wildly on short or noisy clips — which showed up as replies in random
+ * languages. Set ELEVENLABS_STT_LANGUAGE to change it.
+ */
 export async function speechToText(audio: Blob): Promise<string> {
   const modelId = (process.env.ELEVENLABS_STT_MODEL_ID ||
     "scribe_v1") as SpeechToTextConvertRequestModelId;
+  const languageCode = process.env.ELEVENLABS_STT_LANGUAGE || "eng";
+
   const res = await client().speechToText.convert({
     file: audio,
     modelId,
+    languageCode,
+    // We only want words, not "(laughter)" style event tags polluting the text.
+    tagAudioEvents: false,
   });
+
   return (res.text ?? "").trim();
 }

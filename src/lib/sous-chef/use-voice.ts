@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { MIC_CONSTRAINTS, isLikelyNoise } from "./transcript";
 
 /**
  * Lightweight voice helper for a text + voice chatbox, powered by the
@@ -29,7 +30,7 @@ export function useVoice() {
       onTranscriptRef.current = onTranscript;
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
+          audio: MIC_CONSTRAINTS,
         });
         streamRef.current = stream;
         const mime = MediaRecorder.isTypeSupported("audio/webm")
@@ -63,7 +64,9 @@ export function useVoice() {
             if (!res.ok) throw new Error(`Transcription failed (${res.status})`);
             const { text } = (await res.json()) as { text: string };
             const clean = (text ?? "").trim();
-            if (clean) onTranscriptRef.current?.(clean);
+            // Drop silence-hallucinations ("Alpha", "Thank you") so they never
+            // reach Gemini and get mistaken for ingredients.
+            if (clean && !isLikelyNoise(clean)) onTranscriptRef.current?.(clean);
           } catch (err) {
             setError(
               err instanceof Error ? err.message : "Transcription failed",

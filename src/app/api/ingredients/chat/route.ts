@@ -105,6 +105,11 @@ Do not ask about dietary preferences, cooking time, or servings here. Those are 
     const interaction = await ai.interactions.create({
       model: "gemini-3.5-flash",
       input: prompt,
+      // Extracting ingredients from a sentence needs no deep reasoning, and
+      // this runs in a live voice loop — default thinking added ~18s per turn.
+      generation_config: {
+        thinking_level: "minimal",
+      },
       response_format: {
         type: "text",
         mime_type: "application/json",

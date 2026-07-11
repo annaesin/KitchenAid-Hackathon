@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MIC_CONSTRAINTS, isLikelyNoise } from "./transcript";
 
 /**
  * Hands-free conversation mode.
@@ -19,10 +20,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type ConversationState = "idle" | "listening" | "thinking" | "speaking";
 
-const SPEECH_RMS = 0.025; // energy above this = talking
+// Tuned against real mic testing: the old, looser values let room noise start a
+// recording, and Scribe then hallucinated words like "Alpha" from near-silence.
+const SPEECH_RMS = 0.04; // energy above this = actually talking
 const SILENCE_HANG_MS = 900; // this much silence ends your turn
-const MIN_UTTERANCE_MS = 350; // ignore blips
-const BARGE_SUSTAIN_MS = 220; // sustained speech to interrupt a reply
+const MIN_UTTERANCE_MS = 600; // ignore blips/coughs too short to be speech
+const BARGE_SUSTAIN_MS = 300; // sustained speech to interrupt a reply
 
 type Options = {
   onUtterance: (text: string) => Promise<string | null>;
@@ -134,7 +137,8 @@ export function useConversation({
         if (!sttRes.ok) throw new Error(`Transcription failed (${sttRes.status})`);
         const { text } = (await sttRes.json()) as { text: string };
         const userText = (text ?? "").trim();
-        if (!userText) {
+        // Ignore silence-hallucinations so they never reach Gemini.
+        if (!userText || isLikelyNoise(userText)) {
           setState(activeRef.current ? "listening" : "idle");
           return;
         }
@@ -235,7 +239,9 @@ export function useConversation({
 
   const start = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: MIC_CONSTRAINTS,
+      });
       streamRef.current = stream;
       const Ctx =
         window.AudioContext ||
