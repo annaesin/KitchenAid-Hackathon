@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { SaveRecipeButton } from "@/components/recipes/save-recipe-button";
 import { mockRecipes } from "@/data/recipes";
+import { getCachedRecipe } from "@/lib/db/recipes";
 
 type RecipePageProps = {
   params: Promise<{
@@ -25,7 +26,10 @@ type RecipePageProps = {
 export default async function RecipePage({ params }: RecipePageProps) {
   const { id } = await params;
 
-  const recipe = mockRecipes.find((item) => item.id === id);
+  // Recipes found for this user (Spoonacular) are cached in MongoDB; the demo
+  // recipes are bundled. Check both so either kind opens.
+  const recipe =
+    (await getCachedRecipe(id)) ?? mockRecipes.find((item) => item.id === id);
 
   if (!recipe) {
     notFound();
