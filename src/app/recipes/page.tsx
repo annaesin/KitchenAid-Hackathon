@@ -6,6 +6,7 @@ import { Info, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { RecipeCard } from "@/components/recipes/recipe-card";
+import { mockRecipes } from "@/data/recipes";
 import type { Recipe } from "@/types/recipe";
 
 /**
@@ -13,27 +14,34 @@ import type { Recipe } from "@/types/recipe";
  *
  * /ingredients puts the results in sessionStorage and navigates here. They come
  * from Spoonacular (real recipes) and are personalised by Gemini where possible.
+ *
+ * With nothing generated yet we show the sample recipes instead — the home page
+ * links straight here with "View sample recipes".
  */
 export default function RecipesPage() {
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  // Start with the samples so they render server-side and are visible instantly
+  // (the home page's "View sample recipes" links straight here). If the user has
+  // actually generated recipes, we swap them in on mount — sessionStorage isn't
+  // readable during SSR.
+  const [recipes, setRecipes] = useState<Recipe[]>(mockRecipes);
+  const [showingSamples, setShowingSamples] = useState(true);
   const [notice, setNotice] = useState("");
-  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    // sessionStorage doesn't exist during SSR, so this can't be a lazy state
-    // initialiser without a hydration mismatch. Read it just after mount,
-    // deferred so we don't setState synchronously inside the effect body.
     const timer = window.setTimeout(() => {
       try {
         const stored = sessionStorage.getItem("generatedRecipes");
-        if (stored) setRecipes(JSON.parse(stored) as Recipe[]);
+        const generated = stored ? (JSON.parse(stored) as Recipe[]) : [];
 
-        const storedNotice = sessionStorage.getItem("recipesNotice");
-        if (storedNotice) setNotice(storedNotice);
+        if (generated.length > 0) {
+          setRecipes(generated);
+          setShowingSamples(false);
+
+          const storedNotice = sessionStorage.getItem("recipesNotice");
+          if (storedNotice) setNotice(storedNotice);
+        }
       } catch {
-        // Nothing usable stored — fall through to the empty state.
-      } finally {
-        setLoaded(true);
+        // Unreadable — keep showing the samples.
       }
     }, 0);
 
@@ -49,35 +57,35 @@ export default function RecipesPage() {
 
         <div>
           <h1 className="text-3xl font-extrabold tracking-tight">
-            Recipes for you
+            {showingSamples ? "Sample recipes" : "Recipes for you"}
           </h1>
 
           <p className="mt-1 text-muted-foreground">
-            Matched to the ingredients you already have.
+            {showingSamples
+              ? "A taste of what KitchenAid can do. Add your ingredients for recipes matched to you."
+              : "Matched to the ingredients you already have."}
           </p>
         </div>
       </div>
 
-      {notice && (
+      {notice && !showingSamples && (
         <div className="mt-6 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
           <Info className="mt-0.5 size-4 shrink-0" />
           {notice}
         </div>
       )}
 
-      {loaded && recipes.length === 0 && (
-        <div className="mt-10 rounded-3xl border border-dashed p-10 text-center">
-          <p className="font-semibold">No recipes yet.</p>
-
-          <p className="mt-2 text-sm text-muted-foreground">
-            Tell us what ingredients you have and we will find recipes you can
-            actually cook.
+      {showingSamples && (
+        <div className="mt-6 flex flex-col gap-3 rounded-xl border bg-muted/40 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            These are examples. Tell us what you actually have and we will find
+            recipes you can cook right now.
           </p>
 
           <Button
             nativeButton={false}
-            className="mt-6"
-            render={<Link href="/scan?mode=chat">Add ingredients</Link>}
+            className="shrink-0"
+            render={<Link href="/scan?mode=chat">Add my ingredients</Link>}
           />
         </div>
       )}
@@ -88,7 +96,7 @@ export default function RecipesPage() {
             <RecipeCard
               key={recipe.id}
               recipe={recipe}
-              bestMatch={index === 0}
+              bestMatch={!showingSamples && index === 0}
             />
           ))}
         </div>
