@@ -16,30 +16,62 @@ const chatResponseSchema = {
     reply: {
       type: "string",
       description:
-        "A short conversational reply or follow-up question for the user.",
+        "A short conversational reply or one follow-up question.",
     },
+
+    stage: {
+      type: "string",
+      enum: [
+        "ingredients",
+        "confirm-ingredients",
+        "dietary-preferences",
+        "servings",
+        "cooking-time",
+        "final-confirmation",
+        "ready",
+      ],
+    },
+
     ingredients: {
       type: "array",
       items: {
-        type: "object",
-        properties: {
-          name: {
-            type: "string",
-          },
-          confidence: {
-            type: "number",
-          },
-        },
-        required: ["name", "confidence"],
+        type: "string",
       },
     },
-    readyToContinue: {
-      type: "boolean",
+
+    dietaryPreferences: {
+      type: "array",
+      items: {
+        type: "string",
+      },
+    },
+
+    servings: {
+      type: "integer",
       description:
-        "True when the user has given enough ingredient information to continue.",
+        "The requested servings, or 0 if the user has not provided it yet.",
+    },
+
+    maximumCookingTime: {
+      type: "integer",
+      description:
+        "Maximum cooking time in minutes, or 0 if not provided yet.",
+    },
+
+    readyToGenerate: {
+      type: "boolean",
     },
   },
-  required: ["reply", "ingredients", "readyToContinue"],
+
+  required: [
+    "reply",
+    "stage",
+    "ingredients",
+    "dietaryPreferences",
+    "servings",
+    "maximumCookingTime",
+    "readyToGenerate",
+  ],
 };
 
 export async function POST(request: Request) {
@@ -55,7 +87,7 @@ export async function POST(request: Request) {
 
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return NextResponse.json(
-        { message: "A conversation message is required." },
+        { message: "At least one conversation message is required." },
         { status: 400 },
       );
     }
@@ -74,42 +106,75 @@ export async function POST(request: Request) {
     });
 
     const prompt = `
-You are KitchenAid, a friendly AI kitchen assistant.
+You are KitchenAid, a friendly conversational sous-chef.
 
-Your job is to help the user describe the food ingredients they currently have.
+You must gather all information needed to generate personalized recipes.
 
-CONVERSATION:
+CURRENT CONVERSATION:
 ${conversation}
 
-Instructions:
-1. Extract every food ingredient the user has clearly mentioned.
-2. Ask only one short, useful follow-up question at a time.
-3. Do not ask unnecessary questions once enough ingredients have been provided.
-4. Do not invent ingredients.
-5. Do not assume quantities unless the user gives them.
-6. Do not generate recipes yet.
-7. Keep the response warm and concise.
-8. If the user appears finished, summarize the ingredients and set readyToContinue to true.
-9. If more information would help, set readyToContinue to false.
-10. Ingredient confidence should be between 0 and 1.
-11. Do not determine whether food is spoiled, safe, expired, or allergen-free.
+Follow this sequence:
 
-Examples of useful follow-up questions:
-- "Do you have any vegetables, proteins, or pantry staples to add?"
-- "Anything else, such as spices, oil, milk, or cheese?"
-- "Is that everything you would like to cook with today?"
+1. INGREDIENTS
+Ask the user what ingredients they currently have.
+Extract every ingredient they clearly mention.
 
-Do not ask about dietary preferences, cooking time, or servings here. Those are collected on the next page.
+2. CONFIRM INGREDIENTS
+Ask whether the ingredient list is complete.
+Do not move to dietary preferences until the user confirms they are done
+or clearly says there are no more ingredients.
+
+3. DIETARY PREFERENCES
+Ask about dietary restrictions, allergies, or preferences.
+Examples include vegetarian, vegan, halal, gluten-free, dairy-free,
+peanut allergy, or no restrictions.
+
+If the user says none, return an empty dietaryPreferences array.
+
+4. SERVINGS
+Ask how many people the meal should serve.
+Servings must be a positive whole number.
+
+5. COOKING TIME
+Ask for the maximum cooking time in minutes.
+
+6. FINAL CONFIRMATION
+Summarize:
+- ingredients
+- dietary preferences or restrictions
+- servings
+- maximum cooking time
+
+Ask the user to confirm that the summary is correct.
+
+7. READY
+Only after the user clearly confirms the final summary:
+- set stage to "ready"
+- set readyToGenerate to true
+- tell the user you are creating three meal options
+
+Important rules:
+
+- Ask only one clear question at a time.
+- Keep replies short and natural because ElevenLabs reads them aloud.
+- Preserve all previously collected information.
+- Never invent ingredients or preferences.
+- Let the user correct information at any point.
+- Do not generate recipes inside this route.
+- Do not move to the next stage before the current answer is collected.
+- Return servings as 0 until supplied.
+- Return maximumCookingTime as 0 until supplied.
+- readyToGenerate must remain false until the final summary is confirmed.
 `;
 
     const interaction = await ai.interactions.create({
       model: "gemini-3.5-flash",
       input: prompt,
-      // Extracting ingredients from a sentence needs no deep reasoning, and
-      // this runs in a live voice loop — default thinking added ~18s per turn.
+
       generation_config: {
         thinking_level: "minimal",
       },
+
       response_format: {
         type: "text",
         mime_type: "application/json",
@@ -121,15 +186,14 @@ Do not ask about dietary preferences, cooking time, or servings here. Those are 
       throw new Error("Gemini returned an empty response.");
     }
 
-    const result = JSON.parse(interaction.output_text);
-
-    return NextResponse.json(result);
+    return NextResponse.json(
+      JSON.parse(interaction.output_text),
+    );
   } catch (error) {
-    console.error("Ingredient chat failed:", error);
+    console.error("Ingredient conversation failed:", error);
 
-    // A Gemini rate limit is not an app failure — say so plainly instead of
-    // showing a generic error that looks like the app is broken.
     const detail = error instanceof Error ? error.message : "";
+
     const isRateLimited =
       detail.includes("429") ||
       detail.includes("RESOURCE_EXHAUSTED") ||
@@ -139,7 +203,7 @@ Do not ask about dietary preferences, cooking time, or servings here. Those are 
       return NextResponse.json(
         {
           message:
-            "The AI is rate-limited right now (Gemini free-tier quota). Wait a moment and try again.",
+            "The AI is temporarily rate-limited. Please wait about one minute and try again.",
         },
         { status: 429 },
       );
@@ -147,14 +211,17 @@ Do not ask about dietary preferences, cooking time, or servings here. Those are 
 
     if (detail.includes("API key") || detail.includes("API_KEY")) {
       return NextResponse.json(
-        { message: "The Gemini API key is missing or invalid." },
+        {
+          message: "The Gemini API key is missing or invalid.",
+        },
         { status: 401 },
       );
     }
 
     return NextResponse.json(
       {
-        message: "We could not process your ingredients right now.",
+        message:
+          "We could not continue the cooking conversation right now.",
       },
       { status: 500 },
     );
