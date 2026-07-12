@@ -1,10 +1,12 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   AudioLines,
   Bot,
-  Check,
+  Clock,
   LoaderCircle,
   Mic,
   Send,
@@ -18,20 +20,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  IngredientChatError,
   sendIngredientMessage,
   type IngredientChatMessage,
+  type IngredientChatResponse,
 } from "@/lib/api/ingredients-chat";
-import { useVoice } from "@/lib/sous-chef/use-voice";
+import {
+  convertGeneratedRecipes,
+  type GeneratedRecipe,
+} from "@/lib/recipes/convert-generated-recipes";
 import { useConversation } from "@/lib/sous-chef/use-conversation";
-import { classifyUtterance, generateReply } from "@/lib/sous-chef/conversation";
-
-type IngredientChatProps = {
-  onComplete: (data: {
-    ingredients: string[];
-    dietaryPreferences: string[];
-  }) => void;
-};
+import { useVoice } from "@/lib/sous-chef/use-voice";
+import type { Recipe } from "@/types/recipe";
 
 type DisplayMessage = {
   id: string;
@@ -39,38 +38,36 @@ type DisplayMessage = {
   text: string;
 };
 
-const dietaryOptions = ["None", "Vegetarian", "Vegan", "Halal", "Gluten Free"];
+export function IngredientChat() {
+  const router = useRouter();
 
-/**
- * Ingredient assistant — text + voice.
- *
- * The brain is Gemini (`/api/ingredients/chat`), which replies conversationally
- * AND extracts ingredients — so it tells "rice, chicken" apart from "what can I
- * make?" on its own. The ElevenLabs voice layer sits on top:
- *   - mic button     : push-to-talk, speak instead of type (Scribe STT)
- *   - speaker toggle : hear Gemini's replies read aloud (TTS)
- *   - conversation   : hands-free, replies when you pause, interruptible
- */
-export function IngredientChat({ onComplete }: IngredientChatProps) {
   const [messages, setMessages] = useState<DisplayMessage[]>([
     {
       id: crypto.randomUUID(),
       role: "assistant",
-      text: "Hi! Tell me what ingredients you currently have. You can mention them naturally, like: I have rice, chicken, spinach, and onions.",
+      text:
+        "Hi! Tell me what ingredients you currently have, and I’ll help you turn them into a meal.",
     },
   ]);
 
   const [input, setInput] = useState("");
-  const [ingredients, setIngredients] = useState<string[]>([]);
-  const [dietaryPreferences, setDietaryPreferences] = useState<string[]>([]);
-  const [step, setStep] = useState<"ingredients" | "diet">("ingredients");
-  const [isSending, setIsSending] = useState(false);
-  const [readyToContinue, setReadyToContinue] = useState(false);
-  const [error, setError] = useState("");
-  // True once Gemini has rate-limited us and we fell back to basic mode.
-  const [basicMode, setBasicMode] = useState(false);
+  const [chatState, setChatState] =
+    useState<IngredientChatResponse | null>(null);
 
-  // Voice (ElevenLabs).
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const [isGeneratingRecipes, setIsGeneratingRecipes] =
+    useState(false);
+  const [error, setError] = useState("");
+
+  const messagesRef = useRef(messages);
+  const isSendingRef = useRef(false);
+  const generationStartedRef = useRef(false);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const {
     isRecording,
     isTranscribing,
@@ -79,32 +76,107 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
     toggleRecording,
     speak,
   } = useVoice();
+
   const [voiceReplies, setVoiceReplies] = useState(false);
   const lastSpokenIdRef = useRef<string | null>(null);
 
-  // Mirrors of state that the async voice callbacks must read freshly.
-  const messagesRef = useRef(messages);
-  const stepRef = useRef(step);
-  const ingredientsRef = useRef(ingredients);
-  const isSendingRef = useRef(false);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-  useEffect(() => {
-    stepRef.current = step;
-  }, [step]);
-  useEffect(() => {
-    ingredientsRef.current = ingredients;
-  }, [ingredients]);
+  async function generateRecipesFromChat(
+    state: IngredientChatResponse,
+  ): Promise<string> {
+    if (
+      generationStartedRef.current ||
+      state.ingredients.length === 0 ||
+      state.servings <= 0 ||
+      state.maximumCookingTime <= 0
+    ) {
+      return "I still need a few details before generating recipes.";
+    }
 
-  /**
-   * The single path for every input — typed, push-to-talk, or conversation mode.
-   * Sends the conversation to Gemini and returns its reply so voice can speak it.
-   */
-  async function sendMessage(rawText: string): Promise<string | null> {
+    generationStartedRef.current = true;
+    setIsGeneratingRecipes(true);
+    setError("");
+
+    try {
+      const response = await fetch("/api/generate-recipes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          ingredients: state.ingredients,
+          dietaryPreferences: state.dietaryPreferences,
+          maximumCookingTime: state.maximumCookingTime,
+          servings: state.servings,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ?? "We could not generate recipes.",
+        );
+      }
+
+      const convertedRecipes = await convertGeneratedRecipes(
+        result.recipes as GeneratedRecipe[],
+        {
+          servings: state.servings,
+          dietaryPreferences: state.dietaryPreferences,
+        },
+      );
+
+      setRecipes(convertedRecipes);
+
+      sessionStorage.setItem(
+        "generatedRecipes",
+        JSON.stringify(convertedRecipes),
+      );
+
+      const finalReply =
+        "I found three meal options for you. Choose the one you would like to cook.";
+
+      const assistantMessage: DisplayMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: finalReply,
+      };
+
+      messagesRef.current = [
+        ...messagesRef.current,
+        assistantMessage,
+      ];
+
+      setMessages(messagesRef.current);
+
+      return finalReply;
+    } catch (caughtError) {
+      generationStartedRef.current = false;
+
+      const message =
+        caughtError instanceof Error
+          ? caughtError.message
+          : "We could not generate recipes.";
+
+      setError(message);
+
+      return message;
+    } finally {
+      setIsGeneratingRecipes(false);
+    }
+  }
+
+  async function sendMessage(
+    rawText: string,
+  ): Promise<string | null> {
     const cleaned = rawText.trim();
 
-    if (!cleaned || stepRef.current !== "ingredients" || isSendingRef.current) {
+    if (
+      !cleaned ||
+      isSendingRef.current ||
+      isGeneratingRecipes ||
+      recipes.length > 0
+    ) {
       return null;
     }
 
@@ -114,74 +186,55 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
       text: cleaned,
     };
 
-    const updated = [...messagesRef.current, userMessage];
-    messagesRef.current = updated;
-    setMessages(updated);
+    const updatedMessages = [
+      ...messagesRef.current,
+      userMessage,
+    ];
+
+    messagesRef.current = updatedMessages;
+    setMessages(updatedMessages);
     setInput("");
     setIsSending(true);
     isSendingRef.current = true;
     setError("");
 
     try {
-      const apiMessages: IngredientChatMessage[] = updated.map((message) => ({
-        role: message.role,
-        content: message.text,
-      }));
+      const apiMessages: IngredientChatMessage[] =
+        updatedMessages.map((message) => ({
+          role: message.role,
+          content: message.text,
+        }));
 
       const result = await sendIngredientMessage(apiMessages);
 
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          text: result.reply,
-        },
-      ]);
+      setChatState(result);
 
-      setIngredients(result.ingredients.map((ingredient) => ingredient.name));
-      setReadyToContinue(result.readyToContinue);
+      const assistantMessage: DisplayMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        text: result.reply,
+      };
+
+      const messagesWithReply = [
+        ...messagesRef.current,
+        assistantMessage,
+      ];
+
+      messagesRef.current = messagesWithReply;
+      setMessages(messagesWithReply);
+
+      if (result.readyToGenerate) {
+        return await generateRecipesFromChat(result);
+      }
 
       return result.reply;
     } catch (caughtError) {
-      // Gemini rate-limited (free-tier quota). Rather than dying mid-demo, fall
-      // back to the local classifier so voice, ingredient capture and spoken
-      // replies all keep working. The UI says so plainly — see the banner below.
-      if (
-        caughtError instanceof IngredientChatError &&
-        caughtError.isRateLimited
-      ) {
-        setBasicMode(true);
-
-        const classified = classifyUtterance(cleaned);
-
-        if (classified.ingredients.length > 0) {
-          setIngredients((current) => [
-            ...new Set([...current, ...classified.ingredients]),
-          ]);
-        }
-
-        const reply = generateReply(classified, {
-          knownIngredients: ingredientsRef.current,
-        });
-
-        setMessages((current) => [
-          ...current,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            text: reply,
-          },
-        ]);
-
-        return reply;
-      }
-
-      setError(
+      const message =
         caughtError instanceof Error
           ? caughtError.message
-          : "Something went wrong while processing your ingredients.",
-      );
+          : "Something went wrong while processing your request.";
+
+      setError(message);
       return null;
     } finally {
       setIsSending(false);
@@ -189,73 +242,50 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
     }
   }
 
-  // Hands-free: Gemini answers, ElevenLabs speaks, and you can talk over it.
   const conversation = useConversation({
     onUtterance: async (text) => sendMessage(text),
   });
 
-  // Speak replies when the speaker is on. Conversation mode speaks its own
-  // replies, so skip it there to avoid double-talk.
   useEffect(() => {
     if (!voiceReplies || conversation.active) return;
-    const last = messages[messages.length - 1];
-    if (
-      last &&
-      last.role === "assistant" &&
-      last.id !== lastSpokenIdRef.current
-    ) {
-      lastSpokenIdRef.current = last.id;
-      void speak(last.text);
-    }
-  }, [messages, voiceReplies, conversation.active, speak]);
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    const lastMessage = messages[messages.length - 1];
+
+    if (
+      lastMessage &&
+      lastMessage.role === "assistant" &&
+      lastMessage.id !== lastSpokenIdRef.current
+    ) {
+      lastSpokenIdRef.current = lastMessage.id;
+      void speak(lastMessage.text);
+    }
+  }, [
+    messages,
+    voiceReplies,
+    conversation.active,
+    speak,
+  ]);
+
+  function handleSubmit(
+    event: FormEvent<HTMLFormElement>,
+  ) {
     event.preventDefault();
     void sendMessage(input);
   }
 
-  // Push-to-talk: transcribe, then send as a message.
   function handleMic() {
     toggleRecording((transcript) => {
       void sendMessage(transcript);
     });
   }
 
-  function continueToDiet() {
-    if (ingredients.length === 0) return;
-
-    setStep("diet");
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        text: "Great, I have your ingredient list. Do you have any dietary preferences or restrictions?",
-      },
-    ]);
-  }
-
-  function toggleDiet(option: string) {
-    if (option === "None") {
-      setDietaryPreferences([]);
-      return;
-    }
-
-    setDietaryPreferences((current) =>
-      current.includes(option)
-        ? current.filter((item) => item !== option)
-        : [...current, option],
+  function openRecipe(recipe: Recipe) {
+    sessionStorage.setItem(
+      "selectedRecipe",
+      JSON.stringify(recipe),
     );
-  }
 
-  function handleComplete() {
-    if (ingredients.length === 0) return;
-
-    onComplete({
-      ingredients,
-      dietaryPreferences,
-    });
+    router.push(`/recipes/${recipe.id}`);
   }
 
   return (
@@ -271,7 +301,7 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
               <h2 className="font-bold">Sous Chef</h2>
 
               <p className="text-sm text-muted-foreground">
-                Describe what you already have.
+                Describe what you have and get meal ideas.
               </p>
             </div>
           </div>
@@ -286,12 +316,7 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
                   ? "End conversation"
                   : "Start hands-free conversation"
               }
-              title={
-                conversation.active
-                  ? "End conversation"
-                  : "Start hands-free conversation"
-              }
-              className={`flex h-10 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-semibold transition ${
+              className={`flex h-10 items-center gap-2 rounded-xl border px-3 text-sm font-semibold transition ${
                 conversation.active
                   ? "border-green-600 bg-green-600 text-white"
                   : "bg-white text-gray-600 hover:bg-muted"
@@ -310,15 +335,16 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
 
             <button
               type="button"
-              onClick={() => setVoiceReplies((on) => !on)}
+              onClick={() =>
+                setVoiceReplies((current) => !current)
+              }
               aria-pressed={voiceReplies}
               aria-label={
                 voiceReplies
                   ? "Turn off voice replies"
                   : "Turn on voice replies"
               }
-              title={voiceReplies ? "Voice replies on" : "Voice replies off"}
-              className={`flex size-10 shrink-0 items-center justify-center rounded-xl border transition ${
+              className={`flex size-10 items-center justify-center rounded-xl border transition ${
                 voiceReplies
                   ? "border-green-600 bg-green-100 text-green-700"
                   : "bg-white text-gray-500 hover:bg-muted"
@@ -326,7 +352,9 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
             >
               {voiceReplies ? (
                 <Volume2
-                  className={`size-5 ${isSpeaking ? "animate-pulse" : ""}`}
+                  className={`size-5 ${
+                    isSpeaking ? "animate-pulse" : ""
+                  }`}
                 />
               ) : (
                 <VolumeX className="size-5" />
@@ -336,12 +364,14 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
         </div>
       </div>
 
-      <div className="flex h-[330px] flex-col gap-4 overflow-y-auto overscroll-contain p-5">
+      <div className="flex max-h-[700px] min-h-[390px] flex-col gap-4 overflow-y-auto p-5">
         {messages.map((message) => (
           <div
             key={message.id}
             className={`flex items-start gap-3 ${
-              message.role === "user" ? "justify-end" : "justify-start"
+              message.role === "user"
+                ? "justify-end"
+                : "justify-start"
             }`}
           >
             {message.role === "assistant" && (
@@ -367,7 +397,8 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
             )}
           </div>
         ))}
-        {isSending && (
+
+        {(isSending || isGeneratingRecipes) && (
           <div className="flex items-start gap-3">
             <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-green-100 text-green-700">
               <Bot className="size-4" />
@@ -375,172 +406,191 @@ export function IngredientChat({ onComplete }: IngredientChatProps) {
 
             <div className="flex items-center gap-2 rounded-2xl bg-muted px-4 py-3 text-sm text-muted-foreground">
               <LoaderCircle className="size-4 animate-spin" />
-              Thinking...
+
+              {isGeneratingRecipes
+                ? "Creating three meal options..."
+                : "Thinking..."}
             </div>
           </div>
         )}
-        {basicMode && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
-            <span className="font-semibold">Basic mode.</span> The Gemini
-            free-tier quota is used up, so replies are coming from a simple
-            local matcher instead of the AI. Voice still works.
+
+        {chatState && recipes.length === 0 && (
+          <div className="rounded-2xl border bg-green-50/40 p-4 text-xs leading-6 text-muted-foreground">
+            <p>
+              <strong>Ingredients:</strong>{" "}
+              {chatState.ingredients.length > 0
+                ? chatState.ingredients.join(", ")
+                : "Not confirmed"}
+            </p>
+
+            <p>
+              <strong>Dietary needs:</strong>{" "}
+              {chatState.dietaryPreferences.length > 0
+                ? chatState.dietaryPreferences.join(", ")
+                : chatState.stage === "ingredients" ||
+                    chatState.stage === "confirm-ingredients"
+                  ? "Not asked yet"
+                  : "None"}
+            </p>
+
+            <p>
+              <strong>Servings:</strong>{" "}
+              {chatState.servings > 0
+                ? chatState.servings
+                : "Not provided"}
+            </p>
+
+            <p>
+              <strong>Maximum time:</strong>{" "}
+              {chatState.maximumCookingTime > 0
+                ? `${chatState.maximumCookingTime} minutes`
+                : "Not provided"}
+            </p>
           </div>
         )}
+
+        {recipes.length > 0 && (
+          <div className="grid gap-4 pt-2 md:grid-cols-3">
+            {recipes.map((recipe) => (
+              <button
+                key={recipe.id}
+                type="button"
+                onClick={() => openRecipe(recipe)}
+                className="overflow-hidden rounded-2xl border bg-white text-left shadow-sm transition hover:-translate-y-1 hover:shadow-md"
+              >
+                <div className="relative aspect-[4/3] bg-muted">
+                  <Image
+                    src={recipe.image}
+                    alt={
+                      recipe.imageAlt ||
+                      `Photo representing ${recipe.title}`
+                    }
+                    fill
+                    unoptimized
+                    className="object-cover"
+                  />
+                </div>
+
+                <div className="p-4">
+                  <h3 className="font-bold">
+                    {recipe.title}
+                  </h3>
+
+                  <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                    {recipe.description}
+                  </p>
+
+                  <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Clock className="size-3.5" />
+                      {recipe.cookingTimeMinutes} min
+                    </span>
+
+                    <span>{recipe.difficulty}</span>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
         {(error || voiceError) && (
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {error || voiceError}
           </div>
         )}
-        {ingredients.length > 0 && (
-          <div className="rounded-2xl border bg-green-50/40 p-4">
-            <p className="text-sm font-semibold">Ingredients found</p>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {ingredients.map((ingredient) => (
-                <span
-                  key={ingredient}
-                  className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-sm font-medium text-green-700 shadow-sm"
-                >
-                  <Check className="size-3.5" />
-                  {ingredient}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-        {step === "diet" && (
-          <div className="rounded-2xl border p-4">
-            <p className="text-sm font-semibold">Dietary preferences</p>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {dietaryOptions.map((option) => {
-                const selected =
-                  option === "None"
-                    ? dietaryPreferences.length === 0
-                    : dietaryPreferences.includes(option);
-
-                return (
-                  <button
-                    key={option}
-                    type="button"
-                    onClick={() => toggleDiet(option)}
-                    className={`rounded-full border px-3 py-2 text-sm font-medium transition ${
-                      selected
-                        ? "border-green-600 bg-green-50 text-green-700"
-                        : "hover:bg-muted"
-                    }`}
-                  >
-                    {option}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
       </div>
 
-      {step === "ingredients" && (
-        <>
-          {conversation.active && (
-            <div className="flex items-center gap-3 border-t bg-green-50/60 px-5 py-3">
-              <span className="relative flex size-3">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-green-500 opacity-75" />
-                <span className="relative inline-flex size-3 rounded-full bg-green-600" />
-              </span>
+      {conversation.active && recipes.length === 0 && (
+        <div className="flex items-center gap-3 border-t bg-green-50/60 px-5 py-3">
+          <span className="relative flex size-3">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-green-500 opacity-75" />
+            <span className="relative inline-flex size-3 rounded-full bg-green-600" />
+          </span>
 
-              <p className="text-sm font-medium text-green-800">
-                {conversation.state === "thinking"
-                  ? "Thinking…"
-                  : conversation.state === "speaking"
-                    ? "Speaking… (talk to interrupt)"
-                    : "Listening… just talk, I'll reply when you pause."}
-              </p>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="flex gap-3 border-t p-5">
-            <div className="relative flex-1">
-              <Input
-                value={input}
-                onChange={(event) => setInput(event.target.value)}
-                placeholder={
-                  isRecording
-                    ? "Listening… tap the mic to stop"
-                    : isTranscribing
-                      ? "Transcribing…"
-                      : "Example: I have rice, eggs and tomatoes… or tap the mic"
-                }
-                aria-label="Describe your ingredients"
-                disabled={isSending}
-                className="pr-11"
-              />
-
-              <button
-                type="button"
-                onClick={handleMic}
-                disabled={isSending || isTranscribing}
-                aria-pressed={isRecording}
-                aria-label={
-                  isRecording ? "Stop recording" : "Record with microphone"
-                }
-                title={
-                  isRecording ? "Stop recording" : "Speak your ingredients"
-                }
-                className={`absolute top-1/2 right-1.5 flex size-8 -translate-y-1/2 items-center justify-center rounded-lg transition ${
-                  isRecording
-                    ? "bg-red-500 text-white"
-                    : "text-gray-500 hover:bg-muted hover:text-gray-900"
-                } disabled:opacity-50`}
-              >
-                {isTranscribing ? (
-                  <LoaderCircle className="size-4 animate-spin" />
-                ) : isRecording ? (
-                  <Square className="size-3.5 fill-current" />
-                ) : (
-                  <Mic className="size-4" />
-                )}
-              </button>
-            </div>
-
-            <Button
-              type="submit"
-              size="icon"
-              aria-label="Send message"
-              disabled={!input.trim() || isSending}
-            >
-              {isSending ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <Send className="size-4" />
-              )}
-            </Button>
-          </form>
-
-          {/* <div className="px-5 pb-5">
-            <Button
-              type="button"
-              size="lg"
-              className="w-full"
-              disabled={ingredients.length === 0 || isSending}
-              onClick={continueToDiet}
-            >
-              {readyToContinue ? "Continue" : "Continue with ingredients found"}
-            </Button>
-          </div> */}
-        </>
+          <p className="text-sm font-medium text-green-800">
+            {conversation.state === "thinking"
+              ? "Thinking…"
+              : conversation.state === "speaking"
+                ? "Speaking… talk to interrupt"
+                : "Listening… speak and pause when finished"}
+          </p>
+        </div>
       )}
 
-      {step === "diet" && (
-        <div className="border-t p-5">
+      {recipes.length === 0 && (
+        <form
+          onSubmit={handleSubmit}
+          className="flex gap-3 border-t p-5"
+        >
+          <div className="relative flex-1">
+            <Input
+              value={input}
+              onChange={(event) =>
+                setInput(event.target.value)
+              }
+              placeholder={
+                isRecording
+                  ? "Listening… tap the mic to stop"
+                  : isTranscribing
+                    ? "Transcribing…"
+                    : "Reply to the sous-chef..."
+              }
+              disabled={
+                isSending ||
+                isGeneratingRecipes ||
+                isTranscribing
+              }
+              className="pr-11"
+            />
+
+            <button
+              type="button"
+              onClick={handleMic}
+              disabled={
+                isSending ||
+                isGeneratingRecipes ||
+                isTranscribing
+              }
+              aria-pressed={isRecording}
+              aria-label={
+                isRecording
+                  ? "Stop recording"
+                  : "Record with microphone"
+              }
+              className={`absolute right-1.5 top-1/2 flex size-8 -translate-y-1/2 items-center justify-center rounded-lg transition ${
+                isRecording
+                  ? "bg-red-500 text-white"
+                  : "text-gray-500 hover:bg-muted"
+              } disabled:opacity-50`}
+            >
+              {isTranscribing ? (
+                <LoaderCircle className="size-4 animate-spin" />
+              ) : isRecording ? (
+                <Square className="size-3.5 fill-current" />
+              ) : (
+                <Mic className="size-4" />
+              )}
+            </button>
+          </div>
+
           <Button
-            type="button"
-            size="lg"
-            className="w-full"
-            onClick={handleComplete}
+            type="submit"
+            size="icon"
+            aria-label="Send message"
+            disabled={
+              !input.trim() ||
+              isSending ||
+              isGeneratingRecipes
+            }
           >
-            Continue with these ingredients
+            {isSending ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Send className="size-4" />
+            )}
           </Button>
-        </div>
+        </form>
       )}
     </div>
   );

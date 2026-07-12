@@ -156,11 +156,7 @@ export default function ScanPage() {
             </Button>
           </div>
         ) : (
-          <IngredientChat
-            onComplete={({ ingredients, dietaryPreferences }) => {
-              // your existing code
-            }}
-          />
+          <IngredientChat/>
         )}
 
         {inputMode === "photo" && (

@@ -1,3 +1,12 @@
+export type ChatStage =
+  | "ingredients"
+  | "confirm-ingredients"
+  | "dietary-preferences"
+  | "servings"
+  | "cooking-time"
+  | "final-confirmation"
+  | "ready";
+
 export type IngredientChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -5,14 +14,14 @@ export type IngredientChatMessage = {
 
 export type IngredientChatResponse = {
   reply: string;
-  ingredients: {
-    name: string;
-    confidence: number;
-  }[];
-  readyToContinue: boolean;
+  stage: ChatStage;
+  ingredients: string[];
+  dietaryPreferences: string[];
+  servings: number;
+  maximumCookingTime: number;
+  readyToGenerate: boolean;
 };
 
-/** Carries the HTTP status so callers can tell a rate limit (429) from a real failure. */
 export class IngredientChatError extends Error {
   status: number;
 
@@ -22,7 +31,6 @@ export class IngredientChatError extends Error {
     this.status = status;
   }
 
-  /** Gemini quota exhausted — the app can degrade instead of dying. */
   get isRateLimited(): boolean {
     return this.status === 429;
   }
@@ -43,7 +51,8 @@ export async function sendIngredientMessage(
 
   if (!response.ok) {
     throw new IngredientChatError(
-      result.message ?? "We could not process your ingredients.",
+      result.message ??
+        "We could not continue the cooking conversation.",
       response.status,
     );
   }
