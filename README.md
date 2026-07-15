@@ -26,7 +26,12 @@ The project was inspired by the challenges faced by people using food banks, whe
 
 ## My Contributions
 
-As part of a team during **cuHacking 7**, I contributed to the development of KitchenAid by working on the frontend and application features, collaborating closely with teammates to build a complete end-to-end experience within the hackathon timeframe.
+As part of a team during **cuHacking 7**, I focused primarily on the backend and AI integrations. My contributions included:
+
+- Integrated the Gemini API to generate personalized recipes based on user-provided ingredients and preferences.
+- Implemented the Pexels API to dynamically retrieve relevant food images for generated recipes.
+- Worked with teammates to connect backend services with the frontend experience.
+- Collaborated using GitHub to build and deliver a working prototype within the hackathon timeframe.
 
 ## Getting Started
 
