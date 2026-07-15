@@ -64,7 +64,7 @@ Open http://localhost:3000 in your browser.
 ## Demo
 
 - 🎥 Devpost: https://devpost.com/software/kitchenaid
-- 💻 Team Repository: (link to original repository)
+- 💻 Team Repository: https://github.com/damiolabisi1/Hackathon-Project
 
 ## Future Improvements
 
