@@ -1,40 +1,78 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# KitchenAid 🍳
+
+KitchenAid is an AI-powered recipe assistant built during **cuHacking 7**. It helps users make meals using the ingredients they already have by generating personalized recipes based on dietary preferences, serving size, and cooking time.
+
+The project was inspired by the challenges faced by people using food banks, where having ingredients doesn't always mean knowing what to cook. Our goal was to reduce food waste, save money, and make cooking more accessible.
+
+## Features
+
+- 🥕 Scan or describe available ingredients
+- 🤖 AI-powered recipe generation using Gemini
+- 🎤 Voice interaction powered by ElevenLabs
+- 🍽️ Personalized recipes based on dietary preferences, servings, and cooking time
+- 📖 Hands-free Cook Mode with step-by-step guidance
+- ❤️ Save recipes for future use
+- 🖼️ Dynamic recipe images
+
+## Built With
+
+- Next.js
+- React
+- TypeScript
+- Gemini API
+- ElevenLabs API
+- MongoDB
+- CSS
+
+## My Contributions
+
+As part of a team during **cuHacking 7**, I contributed to the development of KitchenAid by working on the frontend and application features, collaborating closely with teammates to build a complete end-to-end experience within the hackathon timeframe.
 
 ## Getting Started
 
-First, run the development server:
+Clone the repository:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+git clone https://github.com/AnnaEsin/KitchenAid-Hackathon.git
 ```
 
-```shell
+Install dependencies:
+
+```bash
+npm install
+```
+
+Create a local environment file:
+
+```bash
 cp .env.template .env.local
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Start the development server:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open http://localhost:3000 in your browser.
 
-## Learn More
+## Demo
 
-To learn more about Next.js, take a look at the following resources:
+- 🎥 Devpost: https://devpost.com/software/kitchenaid
+- 💻 Team Repository: (link to original repository)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Future Improvements
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- AI-generated shopping lists
+- Budget-friendly grocery recommendations
+- Ingredient expiration reminders
+- Weekly meal planning
+- Shared family shopping lists
 
-## Deploy on Vercel
+## Team
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Built during **cuHacking 7** by:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Annabel Esin
+- Damilola Olabisi
+- Gurneet Kaur
